@@ -10,17 +10,17 @@ NutriReceipt is a Streamlit application that estimates a grocery basket's **Purc
 
 ## Repo Contents
 
-- [app.py](/Users/abhinavbarat/Documents/paml/app.py) - Streamlit application
-- [models.py](/Users/abhinavbarat/Documents/paml/models.py) - custom NumPy model classes used by the saved bundle
-- [model_bundle.pkl](/Users/abhinavbarat/Documents/paml/model_bundle.pkl) - trained models and preprocessing statistics
-- [Receipt_Health_Score_Predictor.ipynb](/Users/abhinavbarat/Documents/paml/Receipt_Health_Score_Predictor.ipynb) - training and evaluation notebook
+- [app.py](/{PATH_TO_paml}/app.py) - Streamlit application
+- [models.py](/{PATH_TO_paml}/models.py) - custom NumPy model classes used by the saved bundle
+- [model_bundle.pkl](/{PATH_TO_paml}/model_bundle.pkl) - trained models and preprocessing statistics
+- [Receipt_Health_Score_Predictor.ipynb](/{PATH_TO_paml}/Receipt_Health_Score_Predictor.ipynb) - training and evaluation notebook
 
 ## Local Setup
 
 Create and activate a virtual environment:
 
 ```bash
-cd /Users/abhinavbarat/Documents/paml
+cd {PATH_TO_paml}
 python3 -m venv .venv
 source .venv/bin/activate
 ```
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 Start the app:
 
 ```bash
-cd /Users/abhinavbarat/Documents/paml
+cd {PATH_TO_paml}
 source .venv/bin/activate
 streamlit run app.py
 ```
@@ -56,7 +56,7 @@ http://localhost:8501
 
 If you do not configure an Anthropic key, the app still runs normally, but receipt-image OCR will stay disabled and you should use manual entry or pasted item lists instead.
 
-## Anthropic OCR Setup
+## OCR Setup
 
 Receipt OCR is optional. If you want the `Upload Receipt` tab to extract items automatically, provide an Anthropic API key before launching Streamlit.
 
@@ -65,7 +65,7 @@ Receipt OCR is optional. If you want the `Upload Receipt` tab to extract items a
 Set the key for the current terminal session, then start Streamlit:
 
 ```bash
-cd /Users/abhinavbarat/Documents/paml
+cd {PATH_TO_paml}
 source .venv/bin/activate
 export ANTHROPIC_API_KEY="your_key_here"
 streamlit run app.py
@@ -85,7 +85,7 @@ EOF
 Then run:
 
 ```bash
-cd /Users/abhinavbarat/Documents/paml
+cd {PATH_TO_paml}
 source .venv/bin/activate
 streamlit run app.py
 ```
