@@ -4,7 +4,10 @@ import gzip
 import os
 import pickle
 
-import anthropic
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -152,6 +155,50 @@ button[kind="secondary"]:hover { background: #E8F5ED !important; }
   min-height: 220px !important;
 }
 [data-testid="stFileUploaderDropzoneInstructions"] { padding: 16px 32px 28px !important; }
+
+.nr-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+.nr-stat-card {
+  background: #FAFAF7;
+  border: 1px solid #ECECE8;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.nr-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #72726C;
+  margin-bottom: 6px;
+}
+.nr-stat-value {
+  font-family: 'Fraunces', serif;
+  font-size: 24px;
+  font-weight: 600;
+  color: #1A1A1A;
+  line-height: 1.1;
+}
+.nr-stat-note {
+  font-size: 11px;
+  color: #66665F;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.nr-callout {
+  background: #F6FBF8;
+  border: 1px solid #DDEEE4;
+  border-radius: 14px;
+  padding: 16px 18px;
+  color: #295B3E;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.nr-callout strong {
+  color: #1F6B42;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -180,13 +227,26 @@ SAMPLE_ITEMS = [
 ]
 
 
+class BundleUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if module == "__main__":
+            custom_classes = {
+                "RidgeRegression": RidgeRegression,
+                "KNNRegressor": KNNRegressor,
+                "MLPRegressor": MLPRegressor,
+            }
+            if name in custom_classes:
+                return custom_classes[name]
+        return super().find_class(module, name)
+
+
 def _try_load_pkl(path: str):
     if path.endswith(".gz"):
         with gzip.open(path, "rb") as f:
-            return pickle.load(f)
+            return BundleUnpickler(f).load()
     else:
         with open(path, "rb") as f:
-            return pickle.load(f)
+            return BundleUnpickler(f).load()
 
 
 @st.cache_resource
@@ -239,16 +299,116 @@ def load_bundle():
 
 bundle, bundle_error = load_bundle()
 
+MODEL_ORDER = ["knn", "ridge", "mlp"]
+MIDPOINT_DEFAULT_MODEL = "knn"
+MODEL_LABELS = {"knn": "KNN", "ridge": "Ridge", "mlp": "MLP"}
+MODEL_EMOJI = {"knn": "📍", "ridge": "📈", "mlp": "🧠"}
+DEFAULT_RESULTS_DF = pd.DataFrame(
+    {
+        "Model": ["Ridge Regression", "KNN (k=11)", "MLP Regressor"],
+        "RMSE": [2.6367, 1.7143, 0.1807],
+        "MAE": [2.0015, 1.2757, 0.0673],
+        "R²": [0.9775, 0.9905, 0.9999],
+        "Train Time (s)": [0.0079, 0.0012, 44.3746],
+        "Inference Time (s)": [0.0005, 6.6384, 0.0138],
+    }
+)
+
+
+def model_key_from_label(label: str) -> str:
+    low = label.lower()
+    if "knn" in low:
+        return "knn"
+    if "ridge" in low:
+        return "ridge"
+    return "mlp"
+
+
+def get_model_results_df() -> pd.DataFrame:
+    if bundle and "results" in bundle:
+        try:
+            df = pd.DataFrame(bundle["results"])
+            if "Model" in df.columns and "RMSE" in df.columns:
+                df = df.copy()
+                df["model_key"] = df["Model"].map(model_key_from_label)
+                return df
+        except Exception:
+            pass
+
+    df = DEFAULT_RESULTS_DF.copy()
+    df["model_key"] = df["Model"].map(model_key_from_label)
+    return df
+
+
+MODEL_RESULTS_DF = get_model_results_df()
+
+
+def get_model_metric(model_key: str, column: str) -> float | None:
+    match = MODEL_RESULTS_DF.loc[MODEL_RESULTS_DF["model_key"] == model_key, column]
+    if match.empty:
+        return None
+    try:
+        return float(match.iloc[0])
+    except Exception:
+        return None
+
+
+def get_model_label(model_key: str) -> str:
+    match = MODEL_RESULTS_DF.loc[MODEL_RESULTS_DF["model_key"] == model_key, "Model"]
+    if not match.empty:
+        return str(match.iloc[0])
+    return MODEL_LABELS[model_key]
+
+
+def get_model_picker_label(model_key: str) -> str:
+    if model_key == "knn":
+        best_k = bundle.get("best_k", 11) if bundle else 11
+        return f"{MODEL_EMOJI[model_key]}  KNN Default (k={best_k})"
+    if model_key == "ridge":
+        best_alpha = bundle.get("best_alpha", 1000) if bundle else 1000
+        return f"{MODEL_EMOJI[model_key]}  Ridge (α={best_alpha:.0f})"
+    hidden_dim = 64
+    if bundle and isinstance(bundle.get("best_mlp_cfg"), dict):
+        hidden_dim = bundle["best_mlp_cfg"].get("hidden_dim", hidden_dim)
+    return f"{MODEL_EMOJI[model_key]}  MLP ({hidden_dim} hidden)"
+
+
+def get_model_summary_text(model_key: str) -> str:
+    summary = []
+    if model_key == MIDPOINT_DEFAULT_MODEL:
+        summary.append("midpoint-selected deployment default")
+    rmse = get_model_metric(model_key, "RMSE")
+    r2 = get_model_metric(model_key, "R²")
+    if rmse is not None:
+        summary.append(f"saved test RMSE {rmse:.2f}")
+    if r2 is not None:
+        summary.append(f"R² {r2:.4f}")
+    return " · ".join(summary)
+
 
 def predict_phs(features: dict, model_name: str) -> float | None:
     if bundle is None:
         return None
-    x = np.array([features[f] for f in FEATURE_COLS], dtype=float)
+    feature_cols = bundle.get("feature_cols", FEATURE_COLS)
+    x = np.array([features[f] for f in feature_cols], dtype=float)
     mean = np.array(bundle["train_mean"], dtype=float)
-    std  = np.array(bundle["train_std"],  dtype=float)
+    std = np.array(bundle["train_std"], dtype=float)
+    std = np.where(std == 0, 1.0, std)
     x_norm = (x - mean) / std
     pred = bundle[model_name].predict(x_norm.reshape(1, -1))
     return float(np.clip(np.array(pred).flatten()[0], 0, 100))
+
+
+def predict_all_models(features: dict) -> dict[str, float]:
+    if bundle is None:
+        return {}
+    return {
+        model_key: score
+        for model_key in MODEL_ORDER
+        if model_key in bundle
+        for score in [predict_phs(features, model_key)]
+        if score is not None
+    }
 
 
 # ── Visual helpers ────────────────────────────────────────────────────────────
@@ -380,34 +540,125 @@ def items_to_features(text: str) -> dict:
     }
 
 
+def compute_phs_components(features: dict) -> list[dict]:
+    components = [
+        {
+            "label": "Produce Share",
+            "score": np.clip(features["produce_share"] / 0.5, 0, 1) * 25,
+            "max_score": 25,
+            "note": "Higher fruit and vegetable share raises the baseline.",
+        },
+        {
+            "label": "Fiber Density",
+            "score": np.clip(features["fiber_density"] / 3.0, 0, 1) * 20,
+            "max_score": 20,
+            "note": "Higher fiber per item adds points.",
+        },
+        {
+            "label": "Sugar Density",
+            "score": (1 - np.clip(features["sugar_density"] / 20.0, 0, 1)) * 20,
+            "max_score": 20,
+            "note": "Lower sugar density protects the score.",
+        },
+        {
+            "label": "Sodium Density",
+            "score": (1 - np.clip(features["sodium_density"] / 500.0, 0, 1)) * 15,
+            "max_score": 15,
+            "note": "Lower sodium density keeps more points.",
+        },
+        {
+            "label": "Processed Share",
+            "score": (1 - np.clip(features["processed_share"] / 0.6, 0, 1)) * 20,
+            "max_score": 20,
+            "note": "Fewer processed items improve the basket baseline.",
+        },
+    ]
+    return components
+
+
+def stat_card(label: str, value: str, note: str) -> str:
+    return f"""
+<div class="nr-stat-card">
+  <div class="nr-stat-label">{label}</div>
+  <div class="nr-stat-value">{value}</div>
+  <div class="nr-stat-note">{note}</div>
+</div>"""
+
+
+def render_feature_snapshot(features: dict, source_label: str) -> None:
+    dept_count = max(1, round(features["dept_diversity"] * features["basket_size"]))
+    cards_html = "".join(
+        [
+            stat_card("Basket Size", f"{int(features['basket_size'])}", "estimated grocery items"),
+            stat_card("Produce Share", f"{features['produce_share'] * 100:.0f}%", "higher usually helps"),
+            stat_card("Processed Share", f"{features['processed_share'] * 100:.0f}%", "lower usually helps"),
+            stat_card("Fiber Density", f"{features['fiber_density']:.1f}", "grams per item"),
+            stat_card("Protein Density", f"{features['protein_density']:.1f}", "grams per item"),
+            stat_card("Sugar Density", f"{features['sugar_density']:.1f}", "grams per item"),
+            stat_card("Sodium Density", f"{features['sodium_density']:.0f}", "mg per item"),
+            stat_card("Department Mix", f"{dept_count}", "distinct grocery groupings"),
+        ]
+    )
+    st.markdown(
+        f"""
+<div class="nr-card" style="margin-top:18px;">
+  <div class="nr-section-label">Feature Preview</div>
+  <div class="nr-section-title" style="margin-bottom:10px;">Estimated basket snapshot</div>
+  <p style="font-size:13px;color:#5A5A5A;margin-bottom:18px;">
+    Based on {source_label}. These engineered features are what the saved models use for prediction.
+  </p>
+  <div class="nr-stat-grid">{cards_html}</div>
+</div>""",
+        unsafe_allow_html=True,
+    )
+
+
 def _model_picker() -> str:
     """Render centered model-selector buttons; returns current model_choice."""
     if "model_choice" not in st.session_state:
-        st.session_state["model_choice"] = "mlp"
+        st.session_state["model_choice"] = MIDPOINT_DEFAULT_MODEL
     mc = st.session_state["model_choice"]
     st.markdown(
         '<div class="nr-section-label" style="text-align:center;">Prediction Model</div>',
         unsafe_allow_html=True,
     )
-    _, c1, c2, c3, _ = st.columns([1, 2, 2, 1.5, 1])
+    c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("🧠  MLP  (R²=0.9999)", key="model_mlp",
-                     type="primary" if mc == "mlp" else "secondary", width="stretch"):
-            st.session_state["model_choice"] = "mlp"; st.rerun()
+        if st.button(
+            get_model_picker_label("knn"),
+            key="model_knn",
+            type="primary" if mc == "knn" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["model_choice"] = "knn"
+            st.rerun()
     with c2:
-        if st.button("📈  Ridge  (R²=0.9775)", key="model_ridge",
-                     type="primary" if mc == "ridge" else "secondary", width="stretch"):
-            st.session_state["model_choice"] = "ridge"; st.rerun()
+        if st.button(
+            get_model_picker_label("ridge"),
+            key="model_ridge",
+            type="primary" if mc == "ridge" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["model_choice"] = "ridge"
+            st.rerun()
     with c3:
-        if st.button("📍  KNN  (R²=0.9905)", key="model_knn",
-                     type="primary" if mc == "knn" else "secondary", width="stretch"):
-            st.session_state["model_choice"] = "knn"; st.rerun()
+        if st.button(
+            get_model_picker_label("mlp"),
+            key="model_mlp",
+            type="primary" if mc == "mlp" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["model_choice"] = "mlp"
+            st.rerun()
+    st.caption(f"{MODEL_LABELS[mc]} selected: {get_model_summary_text(mc)}.")
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     return st.session_state["model_choice"]
 
 
 # ── Anthropic receipt OCR ─────────────────────────────────────────────────────
 def get_anthropic_key() -> str | None:
+    if anthropic is None:
+        return None
     try:
         return st.secrets["ANTHROPIC_API_KEY"]
     except Exception:
@@ -416,6 +667,8 @@ def get_anthropic_key() -> str | None:
 
 @st.cache_data(show_spinner=False)
 def extract_items_from_receipt(image_bytes: bytes, media_type: str, api_key: str) -> str:
+    if anthropic is None:
+        raise RuntimeError("The optional `anthropic` package is not installed.")
     client = anthropic.Anthropic(api_key=api_key)
     image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
     message = client.messages.create(
@@ -465,15 +718,15 @@ with logo_col:
 with nav_col:
     b1, b2, b3 = st.columns(3)
     with b1:
-        if st.button("🏠  Home", key="nav_home", type="secondary", width="stretch"):
+        if st.button("🏠  Home", key="nav_home", type="secondary", use_container_width=True):
             st.session_state["page"] = "Home"
             st.rerun()
     with b2:
-        if st.button("📊  Score", key="nav_score", type="secondary", width="stretch"):
+        if st.button("📊  Score", key="nav_score", type="secondary", use_container_width=True):
             st.session_state["page"] = "Score"
             st.rerun()
     with b3:
-        if st.button("🔬  Insights", key="nav_insights", type="secondary", width="stretch"):
+        if st.button("🔬  Insights", key="nav_insights", type="secondary", use_container_width=True):
             st.session_state["page"] = "Insights"
             st.rerun()
 
@@ -564,7 +817,7 @@ if page == "Home":
   <h3 style="font-family:'Fraunces',serif;font-size:26px;font-weight:600;
              color:#fff;margin-bottom:10px;">Ready to score your groceries?</h3>
   <p style="font-size:15px;color:rgba(255,255,255,0.85);margin-bottom:16px;">
-    Upload a receipt photo, manually enter or paste items, or upload a csv file.</p>
+    Upload a receipt photo, manually enter items, or paste a grocery list.</p>
   <p style="font-size:15px;color:rgba(255,255,255,0.70);margin-bottom:0;font-style:italic;">
     ⚠ This score estimates purchase quality, not actual consumption or medical status.</p>
 </div>""",
@@ -593,7 +846,7 @@ elif page == "Score":
     if bundle_error:
         st.error(
             f"Could not load model bundle: {bundle_error}\n\n"
-            "Make sure `model_bundle.pkl.gz` is in the same folder as `app.py`, "
+            "Make sure `model_bundle.pkl` or `model_bundle.pkl.gz` is in the same folder as `app.py`, "
             "and that any custom model classes are importable (see README)."
         )
 
@@ -614,7 +867,12 @@ elif page == "Score":
         # Load Sample Receipt — centered below header
         _, sample_btn_col, _ = st.columns([3, 2, 3])
         with sample_btn_col:
-            if st.button("📋  Load Sample Receipt", key="load_sample_header", type="secondary", width="stretch"):
+            if st.button(
+                "📋  Load Sample Receipt",
+                key="load_sample_header",
+                type="secondary",
+                use_container_width=True,
+            ):
                 st.session_state["manual_items"] = [dict(item) for item in SAMPLE_ITEMS]
                 st.session_state["active_tab"] = 1
                 st.rerun()
@@ -628,30 +886,51 @@ elif page == "Score":
 
         tc1, tc2, tc3 = st.columns(3)
         with tc1:
-            if st.button("📷  Upload Receipt", key="tab_btn_0",
-                         type="primary" if active_tab == 0 else "secondary", width="stretch"):
+            if st.button(
+                "📷  Upload Receipt",
+                key="tab_btn_0",
+                type="primary" if active_tab == 0 else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["active_tab"] = 0
                 st.rerun()
         with tc2:
-            if st.button("🎛️  Manual Input", key="tab_btn_1",
-                         type="primary" if active_tab == 1 else "secondary", width="stretch"):
+            if st.button(
+                "🎛️  Manual Input",
+                key="tab_btn_1",
+                type="primary" if active_tab == 1 else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["active_tab"] = 1
                 st.rerun()
         with tc3:
-            if st.button("📝  Paste Items", key="tab_btn_2",
-                         type="primary" if active_tab == 2 else "secondary", width="stretch"):
+            if st.button(
+                "📝  Paste Items",
+                key="tab_btn_2",
+                type="primary" if active_tab == 2 else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["active_tab"] = 2
                 st.rerun()
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-        features: dict | None = None
+        current_items_text = ""
+        preview_source = ""
 
         # ── Tab 0: Receipt upload ─────────────────────────────────────────────
         if active_tab == 0:
             api_key = get_anthropic_key()
-            if not api_key:
-                st.info("Receipt OCR requires an Anthropic API key. Set `ANTHROPIC_API_KEY` in your environment to enable this feature.", icon="🔑")
+            if anthropic is None:
+                st.info(
+                    "Receipt OCR is optional. Install the `anthropic` package and add an API key to turn this tab on.",
+                    icon="🧾",
+                )
+            elif not api_key:
+                st.info(
+                    "Receipt OCR is optional. Set `ANTHROPIC_API_KEY` in your environment to extract grocery items from receipt images.",
+                    icon="🔑",
+                )
 
             _, up_col, _ = st.columns([1, 3, 1])
             with up_col:
@@ -678,34 +957,34 @@ elif page == "Score":
                         unsafe_allow_html=True,
                     )
 
-            if uploaded_img and api_key:
+            if uploaded_img:
                 img_bytes = uploaded_img.read()
                 mt_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
                 media_type = mt_map.get(uploaded_img.name.rsplit(".", 1)[-1].lower(), "image/jpeg")
 
                 prev_col, edit_col = st.columns([1, 1], gap="large")
                 with prev_col:
-                    st.image(img_bytes, caption="Uploaded receipt", width="stretch")
+                    st.image(img_bytes, caption="Uploaded receipt", use_container_width=True)
                 with edit_col:
-                    with st.spinner("Extracting items from receipt…"):
-                        try:
-                            extracted = extract_items_from_receipt(img_bytes, media_type, api_key)
-                        except Exception as exc:
-                            st.error(f"OCR failed: {exc}")
-                            extracted = ""
-                    if extracted:
-                        items_text_ocr = st.text_area(
-                            "Extracted items — edit if needed",
-                            value=extracted,
-                            height=240,
-                        )
-                        _model_picker()
-                        if st.button("🔍  Predict Health Score", key="btn_receipt") and items_text_ocr.strip():
-                            features = items_to_features(items_text_ocr)
-                            st.session_state["features"]    = features
-                            st.session_state["run_predict"] = True
-            elif uploaded_img and not api_key:
-                st.warning("Set the `ANTHROPIC_API_KEY` environment variable to extract items from this receipt.")
+                    if anthropic is None:
+                        st.warning("Install `anthropic` and add an API key to extract grocery items from this receipt.")
+                    elif not api_key:
+                        st.warning("Set `ANTHROPIC_API_KEY` to extract grocery items from this receipt.")
+                    else:
+                        with st.spinner("Extracting items from receipt..."):
+                            try:
+                                extracted = extract_items_from_receipt(img_bytes, media_type, api_key)
+                            except Exception as exc:
+                                st.error(f"OCR failed: {exc}")
+                                extracted = ""
+                        if extracted:
+                            items_text_ocr = st.text_area(
+                                "Extracted items — edit if needed",
+                                value=extracted,
+                                height=240,
+                            )
+                            current_items_text = items_text_ocr
+                            preview_source = "OCR-extracted receipt items"
 
         # ── Tab 1: Manual item search ─────────────────────────────────────────
         elif active_tab == 1:
@@ -720,7 +999,7 @@ elif page == "Score":
                     label_visibility="collapsed",
                 )
             with add_col:
-                if st.button("＋ Add", key="add_item_btn", width="stretch"):
+                if st.button("＋ Add", key="add_item_btn", use_container_width=True):
                     if new_item.strip():
                         st.session_state["manual_items"].append({"name": new_item.strip(), "qty": 1})
                         st.rerun()
@@ -764,21 +1043,18 @@ elif page == "Score":
                             st.rerun()
 
                 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                _model_picker()
-                clr_col, pred_col = st.columns([1, 2])
+                current_items_text = "\n".join(
+                    "\n".join([it["name"]] * int(it["qty"]))
+                    for it in st.session_state["manual_items"]
+                )
+                preview_source = "your manual basket entries"
+                clr_col, note_col = st.columns([1, 2])
                 with clr_col:
                     if st.button("Clear all", key="clear_items", type="secondary"):
                         st.session_state["manual_items"] = []
                         st.rerun()
-                with pred_col:
-                    if st.button("🔍  Predict Health Score", key="btn_manual", width="stretch"):
-                        items_text = "\n".join(
-                            "\n".join([it["name"]] * it["qty"])
-                            for it in st.session_state["manual_items"]
-                        )
-                        features = items_to_features(items_text)
-                        st.session_state["features"]    = features
-                        st.session_state["run_predict"] = True
+                with note_col:
+                    st.caption("Quantities repeat items when estimating the basket snapshot below.")
             else:
                 st.markdown(
                     "<p style='color:#999;font-size:14px;padding:24px 0;text-align:center;'>"
@@ -805,12 +1081,26 @@ elif page == "Score":
                 label_visibility="collapsed",
             )
             st.caption("💡 Include keywords like 'spinach', 'chips', 'juice' for better matching.")
+            current_items_text = items_text
+            preview_source = "your pasted item list"
 
+        if current_items_text.strip():
+            preview_features = items_to_features(current_items_text)
+            render_feature_snapshot(preview_features, preview_source)
             _model_picker()
-            if st.button("🔍  Predict Health Score", key="btn_paste") and items_text.strip():
-                features = items_to_features(items_text)
-                st.session_state["features"]    = features
+            st.markdown(
+                """
+<div class="nr-callout" style="margin:8px 0 16px 0;">
+  <strong>Project default:</strong> KNN stays selected by default to match the midpoint deployment plan,
+  and you can compare all three saved models after prediction.
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            if st.button("🔍  Predict Health Score", key=f"btn_predict_{active_tab}", use_container_width=True):
+                st.session_state["features"] = preview_features
                 st.session_state["run_predict"] = True
+                st.session_state["last_items_text"] = current_items_text
 
     # ── Results ────────────────────────────────────────────────────────────────
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
@@ -867,11 +1157,42 @@ elif page == "Score":
         if bundle is None:
             st.warning("Model bundle not loaded — cannot predict.")
         else:
-            score = predict_phs(f, st.session_state.get("model_choice", "mlp"))
+            selected_model = st.session_state.get("model_choice", MIDPOINT_DEFAULT_MODEL)
+            score = predict_phs(f, selected_model)
             if score is None:
                 st.error("Prediction failed. Check the console for details.")
             else:
                 t_label, t_color, t_bg = tier(score)
+                component_scores = compute_phs_components(f)
+                component_total = sum(component["score"] for component in component_scores)
+                component_cards_html = "".join(
+                    stat_card(
+                        component["label"],
+                        f"{component['score']:.1f} / {component['max_score']}",
+                        component["note"],
+                    )
+                    for component in component_scores
+                )
+                all_scores = predict_all_models(f)
+                comparison_rows = []
+                for model_key in MODEL_ORDER:
+                    if model_key not in all_scores:
+                        continue
+                    comparison_rows.append(
+                        {
+                            "Selected": "Yes" if model_key == selected_model else "",
+                            "Model": get_model_label(model_key),
+                            "Basket Prediction": round(all_scores[model_key], 1),
+                            "Saved Test RMSE": round(get_model_metric(model_key, "RMSE") or 0, 2),
+                            "Saved Test R²": round(get_model_metric(model_key, "R²") or 0, 4),
+                            "Project Role": "Midpoint default" if model_key == MIDPOINT_DEFAULT_MODEL else "Comparison model",
+                        }
+                    )
+                comparison_df = pd.DataFrame(comparison_rows)
+                prediction_spread = (
+                    max(all_scores.values()) - min(all_scores.values())
+                    if len(all_scores) > 1 else 0.0
+                )
 
                 score_col, factors_col = st.columns([1, 2])
 
@@ -891,6 +1212,8 @@ elif page == "Score":
                font-size:12px;font-weight:700;text-transform:uppercase;
                letter-spacing:0.06em;background:{t_bg};color:{t_color};
                margin-bottom:10px;">{t_label}</span>
+  <p style="font-size:12px;color:#2D8C5A;font-weight:600;margin:-2px 0 10px 0;">
+    {MODEL_LABELS[selected_model]} prediction</p>
   <p style="font-size:13px;color:#5A5A5A;line-height:1.55;">{desc_text}</p>
 </div>""",
                         unsafe_allow_html=True,
@@ -914,6 +1237,33 @@ elif page == "Score":
                         unsafe_allow_html=True,
                     )
 
+                st.markdown(
+                    f"""
+<div class="nr-card" style="margin-top:4px;">
+  <div class="nr-section-label">Interpretability</div>
+  <div class="nr-section-title" style="margin-bottom:10px;">Purchase Health Score component scorecard</div>
+  <p style="font-size:13px;color:#5A5A5A;margin-bottom:18px;">
+    Weak-label baseline: <strong>{component_total:.1f} / 100</strong>. The trained models learn from these same
+    engineered basket features, so this view shows where the underlying score pressure is coming from.
+  </p>
+  <div class="nr-stat-grid">{component_cards_html}</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                if not comparison_df.empty:
+                    st.markdown(
+                        f"""
+<div class="nr-callout" style="margin:4px 0 12px 0;">
+  <strong>Model comparison for this basket:</strong> the current basket spans {prediction_spread:.1f}
+  points across the saved models. KNN remains the default deployed choice from the midpoint check-in,
+  while Ridge and MLP stay available for side-by-side comparison.
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                    st.dataframe(comparison_df, hide_index=True, use_container_width=True)
+
                 # Nutrition summary
                 total_fiber   = f["fiber_density"]   * f["basket_size"]
                 total_sodium  = f["sodium_density"]  * f["basket_size"]
@@ -935,9 +1285,10 @@ elif page == "Score":
 <div class="nr-card" style="margin-top:4px;">
   <h3 style="font-size:15px;font-weight:600;margin-bottom:20px;color:#1A1A1A;">
     Basket Nutrition Summary</h3>
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;">
     {nut_card("🔥", f"{f['total_calories']:.0f}", "kcal", "Total Calories")}
     {nut_card("🌾", f"{total_fiber:.1f}",  "g",  "Total Fiber")}
+    {nut_card("🥩", f"{total_protein:.1f}", "g", "Total Protein")}
     {nut_card("🧂", f"{total_sodium:.0f}", "mg", "Total Sodium")}
     {nut_card("🍬", f"{total_sugar:.1f}",  "g",  "Total Sugar")}
   </div>
@@ -995,16 +1346,29 @@ elif page == "Insights":
     # Performance table
     st.markdown('<div class="nr-section-label">Performance</div>', unsafe_allow_html=True)
     st.markdown('<div class="nr-section-title">Model Comparison</div>', unsafe_allow_html=True)
-    st.dataframe(
-        pd.DataFrame({
-            "Model":       ["Ridge Regression", "KNN (k=11)", "MLP Neural Net"],
-            "Test RMSE":   [2.64,  1.71,  0.18],
-            "Test R²":     [0.9775, 0.9905, 0.9999],
-            "Train Time":  ["0.008 s", "~0 s",  "44 s"],
-            "Inference":   ["Instant",  "~6.6 s", "Instant"],
-        }).set_index("Model"),
-        width="stretch",
+    insights_df = MODEL_RESULTS_DF.copy()
+    insights_df["Project Role"] = insights_df["model_key"].map(
+        lambda key: "Midpoint default deployment choice" if key == MIDPOINT_DEFAULT_MODEL else "Comparison model"
     )
+    st.dataframe(
+        insights_df[
+            ["Model", "RMSE", "MAE", "R²", "Train Time (s)", "Inference Time (s)", "Project Role"]
+        ].set_index("Model"),
+        use_container_width=True,
+    )
+    if bundle:
+        mlp_cfg = bundle.get("best_mlp_cfg", {})
+        st.markdown(
+            f"""
+<div class="nr-callout" style="margin:10px 0 6px 0;">
+  <strong>Saved tuning snapshot:</strong> Ridge α = {bundle.get('best_alpha', 1000):.0f},
+  KNN k = {bundle.get('best_k', 11)}, and MLP hidden dim = {mlp_cfg.get('hidden_dim', 64)},
+  lr = {mlp_cfg.get('lr', 0.01)}, α = {mlp_cfg.get('alpha', 0.001)}.
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    st.bar_chart(insights_df.set_index("Model")[["RMSE", "MAE"]])
 
     # Ridge coefficients
     if bundle and "ridge" in bundle:
@@ -1019,8 +1383,9 @@ elif page == "Insights":
         try:
             model = bundle["ridge"]
             coefs = (
-                model.weights if hasattr(model, "weights") else
-                model.coef_   if hasattr(model, "coef_")   else
+                model.w if hasattr(model, "w") else
+                np.array(model.weights).flatten()[:len(FEATURE_COLS)] if hasattr(model, "weights") else
+                model.coef_ if hasattr(model, "coef_") else
                 None
             )
             if coefs is not None:
@@ -1045,38 +1410,27 @@ elif page == "Insights":
         unsafe_allow_html=True,
     )
     st.markdown('<div class="nr-section-title">How PHS is Computed</div>', unsafe_allow_html=True)
+    methodology_cards = "".join(
+        [
+            stat_card("Produce Share", "25 max", "Full points at roughly 50% of basket items."),
+            stat_card("Fiber Density", "20 max", "Rewards baskets that average 3g fiber per item."),
+            stat_card("Sugar Density", "20 max", "Loses points as average sugar approaches 20g per item."),
+            stat_card("Sodium Density", "15 max", "Loses points as average sodium approaches 500mg per item."),
+            stat_card("Processed Share", "20 max", "Loses points as processed share approaches 60% of items."),
+        ]
+    )
     st.markdown(
-        """
+        f"""
 <div class="nr-card">
   <p style="font-size:14px;color:#5A5A5A;line-height:1.7;margin-bottom:16px;">
     The <strong>Purchase Health Score (PHS)</strong> is a weakly-supervised nutritional metric (0–100)
-    inspired by the USDA Healthy Eating Index. It is derived from five sub-scores:
+    inspired by the USDA Healthy Eating Index. It is derived from five capped sub-scores:
   </p>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-    <div style="background:#F8F8F5;border-radius:10px;padding:14px;">
-      <div style="font-weight:600;color:#2D8C5A;margin-bottom:4px;">🥦 Produce Share</div>
-      <div style="font-size:12px;color:#5A5A5A;">Fraction of basket items from produce departments</div>
-    </div>
-    <div style="background:#F8F8F5;border-radius:10px;padding:14px;">
-      <div style="font-weight:600;color:#2D8C5A;margin-bottom:4px;">🌾 Fiber Density</div>
-      <div style="font-size:12px;color:#5A5A5A;">Average grams of fiber per basket item</div>
-    </div>
-    <div style="background:#F8F8F5;border-radius:10px;padding:14px;">
-      <div style="font-weight:600;color:#2D8C5A;margin-bottom:4px;">🥩 Protein Density</div>
-      <div style="font-size:12px;color:#5A5A5A;">Average grams of protein per basket item</div>
-    </div>
-    <div style="background:#F8F8F5;border-radius:10px;padding:14px;">
-      <div style="font-weight:600;color:#F2A541;margin-bottom:4px;">🍬 Sugar / Sodium</div>
-      <div style="font-size:12px;color:#5A5A5A;">Average sugar and sodium per item (penalized)</div>
-    </div>
-    <div style="background:#F8F8F5;border-radius:10px;padding:16px;grid-column:span 2;">
-      <div style="font-weight:600;color:#F2A541;margin-bottom:4px;">📦 Processed Share</div>
-      <div style="font-size:12px;color:#5A5A5A;">
-        Fraction of basket items from processed-food aisles.
-        All features are Z-score normalized before being fed to the model.
-      </div>
-    </div>
-  </div>
+  <div class="nr-stat-grid" style="margin-bottom:16px;">{methodology_cards}</div>
+  <p style="font-size:13px;color:#5A5A5A;line-height:1.65;margin-bottom:0;">
+    The deployed models also use basket size, calories, protein density, beverage share, and department diversity.
+    All engineered features are Z-score normalized before prediction.
+  </p>
 </div>""",
         unsafe_allow_html=True,
     )
