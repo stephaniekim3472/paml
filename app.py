@@ -145,6 +145,14 @@ button[kind="secondary"]:hover { background: #E8F5ED !important; }
   border-radius: 6px;
 }
 @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+@keyframes ocr-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes ocr-bounce {
+  0%, 80%, 100% { transform: translateY(0);    opacity: 0.35; }
+  40%           { transform: translateY(-8px); opacity: 1; }
+}
 
 /* Page footer */
 .nr-footer {
@@ -225,7 +233,7 @@ button[kind="secondary"]:hover { background: #E8F5ED !important; }
 .nr-cta-wrap > div > button {
   font-size: 18px !important;
   font-weight: 700 !important;
-  padding: 18px 0 !important;
+  padding: 18px 20px !important;
   border-radius: 14px !important;
   letter-spacing: 0.01em !important;
   box-shadow: 0 6px 28px rgba(45,140,90,0.4) !important;
@@ -664,7 +672,7 @@ def _model_picker() -> str:
             get_model_picker_label("knn"),
             key="model_knn",
             type="primary" if mc == "knn" else "secondary",
-            use_container_width=True,
+            width='stretch',
         ):
             st.session_state["model_choice"] = "knn"
             st.rerun()
@@ -673,7 +681,7 @@ def _model_picker() -> str:
             get_model_picker_label("ridge"),
             key="model_ridge",
             type="primary" if mc == "ridge" else "secondary",
-            use_container_width=True,
+            width='stretch',
         ):
             st.session_state["model_choice"] = "ridge"
             st.rerun()
@@ -682,7 +690,7 @@ def _model_picker() -> str:
             get_model_picker_label("mlp"),
             key="model_mlp",
             type="primary" if mc == "mlp" else "secondary",
-            use_container_width=True,
+            width='stretch',
         ):
             st.session_state["model_choice"] = "mlp"
             st.rerun()
@@ -754,15 +762,15 @@ with logo_col:
 with nav_col:
     b1, b2, b3 = st.columns(3)
     with b1:
-        if st.button("🏠  Home", key="nav_home", type="secondary", use_container_width=True):
+        if st.button("🏠  Home", key="nav_home", type="secondary", width='stretch'):
             st.session_state["page"] = "Home"
             st.rerun()
     with b2:
-        if st.button("📊  Score", key="nav_score", type="secondary", use_container_width=True):
+        if st.button("📊  Score", key="nav_score", type="secondary", width='stretch'):
             st.session_state["page"] = "Score"
             st.rerun()
     with b3:
-        if st.button("🔬  Insights", key="nav_insights", type="secondary", use_container_width=True):
+        if st.button("🔬  Insights", key="nav_insights", type="secondary", width='stretch'):
             st.session_state["page"] = "Insights"
             st.rerun()
 
@@ -863,7 +871,7 @@ if page == "Home":
     _, cta_col, _ = st.columns([1, 2, 1])
     with cta_col:
         st.markdown('<div class="nr-cta-wrap">', unsafe_allow_html=True)
-        if st.button("📷  Score My Receipt →", key="home_cta", use_container_width=True):
+        if st.button("📷  Score My Receipt →", key="home_cta", type="primary", width='stretch'):
             st.session_state["page"] = "Score"
             st.session_state["_scroll_top"] = True
             st.rerun()
@@ -924,7 +932,7 @@ elif page == "Score":
                 "📋  Load Sample Receipt",
                 key="load_sample_header",
                 type="secondary",
-                use_container_width=True,
+                width='stretch',
             ):
                 st.session_state["manual_items"] = [dict(item) for item in SAMPLE_ITEMS]
                 st.session_state["active_tab"] = 1
@@ -943,7 +951,7 @@ elif page == "Score":
                 "📷  Upload Receipt",
                 key="tab_btn_0",
                 type="primary" if active_tab == 0 else "secondary",
-                use_container_width=True,
+                width='stretch',
             ):
                 st.session_state["active_tab"] = 0
                 st.rerun()
@@ -952,7 +960,7 @@ elif page == "Score":
                 "🎛️  Manual Input",
                 key="tab_btn_1",
                 type="primary" if active_tab == 1 else "secondary",
-                use_container_width=True,
+                width='stretch',
             ):
                 st.session_state["active_tab"] = 1
                 st.rerun()
@@ -961,7 +969,7 @@ elif page == "Score":
                 "📝  Paste Items",
                 key="tab_btn_2",
                 type="primary" if active_tab == 2 else "secondary",
-                use_container_width=True,
+                width='stretch',
             ):
                 st.session_state["active_tab"] = 2
                 st.rerun()
@@ -1017,19 +1025,40 @@ elif page == "Score":
 
                 prev_col, edit_col = st.columns([1, 1], gap="large")
                 with prev_col:
-                    st.image(img_bytes, caption="Uploaded receipt", use_container_width=True)
+                    st.image(img_bytes, caption="Uploaded receipt", width='stretch')
                 with edit_col:
                     if anthropic is None:
                         st.warning("Install `anthropic` and add an API key to extract grocery items from this receipt.")
                     elif not api_key:
                         st.warning("Set `ANTHROPIC_API_KEY` to extract grocery items from this receipt.")
                     else:
-                        with st.spinner("Extracting items from receipt..."):
-                            try:
-                                extracted = extract_items_from_receipt(img_bytes, media_type, api_key)
-                            except Exception as exc:
-                                st.error(f"OCR failed: {exc}")
-                                extracted = ""
+                        _ocr_ph = st.empty()
+                        _ocr_ph.markdown(
+                            """
+<div style="text-align:center;padding:36px 0 28px;">
+  <div style="font-size:52px;display:inline-block;
+              animation:ocr-float 1.5s ease-in-out infinite;margin-bottom:20px;">🧾</div>
+  <div style="display:flex;justify-content:center;gap:10px;margin-bottom:18px;">
+    <span style="width:10px;height:10px;border-radius:50%;background:#2D8C5A;display:inline-block;
+                 animation:ocr-bounce 1.2s ease-in-out infinite;animation-delay:0s;"></span>
+    <span style="width:10px;height:10px;border-radius:50%;background:#2D8C5A;display:inline-block;
+                 animation:ocr-bounce 1.2s ease-in-out infinite;animation-delay:0.2s;"></span>
+    <span style="width:10px;height:10px;border-radius:50%;background:#2D8C5A;display:inline-block;
+                 animation:ocr-bounce 1.2s ease-in-out infinite;animation-delay:0.4s;"></span>
+  </div>
+  <p style="font-size:14px;font-weight:600;color:#2D8C5A;margin:0;">Reading your receipt…</p>
+  <p style="font-size:12px;color:#5A5A5A;margin:6px 0 0;">This usually takes a few seconds.</p>
+</div>""",
+                            unsafe_allow_html=True,
+                        )
+                        try:
+                            extracted = extract_items_from_receipt(img_bytes, media_type, api_key)
+                        except Exception as exc:
+                            extracted = ""
+                            _ocr_ph.empty()
+                            st.error(f"OCR failed: {exc}")
+                        else:
+                            _ocr_ph.empty()
                         if extracted:
                             items_text_ocr = st.text_area(
                                 "Extracted items — edit if needed",
@@ -1052,7 +1081,7 @@ elif page == "Score":
                     label_visibility="collapsed",
                 )
             with add_col:
-                if st.button("＋ Add", key="add_item_btn", use_container_width=True):
+                if st.button("＋ Add", key="add_item_btn", width='stretch'):
                     if new_item.strip():
                         st.session_state["manual_items"].append({"name": new_item.strip(), "qty": 1})
                         st.rerun()
@@ -1137,23 +1166,66 @@ elif page == "Score":
             current_items_text = items_text
             preview_source = "your pasted item list"
 
-        if current_items_text.strip():
+        # ── Feature Preview ───────────────────────────────────────────────────
+        has_items = bool(current_items_text.strip())
+        if has_items:
             preview_features = items_to_features(current_items_text)
             render_feature_snapshot(preview_features, preview_source)
-            _model_picker()
+        else:
+            preview_features = None
+            ph_cards = "".join(
+                '<div class="nr-stat-card">'
+                '<div class="nr-placeholder-bar" style="width:55%;height:10px;margin-bottom:8px;"></div>'
+                '<div class="nr-placeholder-bar" style="width:45%;height:22px;margin-bottom:6px;"></div>'
+                '<div class="nr-placeholder-bar" style="width:65%;height:9px;"></div>'
+                '</div>'
+                for _ in range(8)
+            )
             st.markdown(
-                """
+                f"""
+<div class="nr-card" style="margin-top:18px;">
+  <div class="nr-section-label">Feature Preview</div>
+  <div class="nr-section-title" style="margin-bottom:10px;">Estimated basket snapshot</div>
+  <p style="font-size:13px;color:#5A5A5A;margin-bottom:18px;">
+    Add items above to see your basket features here.
+  </p>
+  <div class="nr-stat-grid">{ph_cards}</div>
+</div>""",
+                unsafe_allow_html=True,
+            )
+
+        # ── Prediction Model picker ───────────────────────────────────────────
+        if not has_items:
+            st.markdown(
+                '<div style="opacity:0.4;pointer-events:none;user-select:none;">',
+                unsafe_allow_html=True,
+            )
+        _model_picker()
+        if not has_items:
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown(
+            """
 <div class="nr-callout" style="margin:8px 0 16px 0;">
   <strong>Project default:</strong> KNN stays selected by default to match the midpoint deployment plan,
   and you can compare all three saved models after prediction.
 </div>
 """,
-                unsafe_allow_html=True,
-            )
-            if st.button("🔍  Predict Health Score", key=f"btn_predict_{active_tab}", use_container_width=True):
-                st.session_state["features"] = preview_features
-                st.session_state["run_predict"] = True
-                st.session_state["last_items_text"] = current_items_text
+            unsafe_allow_html=True,
+        )
+
+        # ── Predict button ────────────────────────────────────────────────────
+        _, predict_col, _ = st.columns([1, 2, 1])
+        with predict_col:
+            st.markdown('<div class="nr-cta-wrap">', unsafe_allow_html=True)
+            if st.button("🔍  Predict Health Score", key=f"btn_predict_{active_tab}", type="primary", width='stretch'):
+                if not has_items:
+                    st.toast("Add at least one grocery item before predicting.", icon="⚠️")
+                else:
+                    st.session_state["features"] = preview_features
+                    st.session_state["run_predict"] = True
+                    st.session_state["last_items_text"] = current_items_text
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Results ────────────────────────────────────────────────────────────────
     st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
@@ -1315,7 +1387,7 @@ elif page == "Score":
 """,
                         unsafe_allow_html=True,
                     )
-                    st.dataframe(comparison_df, hide_index=True, use_container_width=True)
+                    st.dataframe(comparison_df, hide_index=True, width='stretch')
 
                 # Nutrition summary
                 total_fiber   = f["fiber_density"]   * f["basket_size"]
@@ -1407,7 +1479,7 @@ elif page == "Insights":
         insights_df[
             ["Model", "RMSE", "MAE", "R²", "Train Time (s)", "Inference Time (s)", "Project Role"]
         ].set_index("Model"),
-        use_container_width=True,
+        width='stretch',
     )
     if bundle:
         mlp_cfg = bundle.get("best_mlp_cfg", {})
