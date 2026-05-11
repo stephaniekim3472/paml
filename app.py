@@ -11,6 +11,7 @@ except ImportError:
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as st_components  # type: ignore[import-untyped]
 from models import KNNRegressor, MLPRegressor, RidgeRegression  # noqa: F401 — required for pickle
 
 st.set_page_config(
@@ -95,6 +96,9 @@ html, body, [class*="css"]  { font-family: 'DM Sans', sans-serif !important; }
 [data-testid="stSidebar"]        { display: none !important; }
 [data-testid="collapsedControl"] { display: none !important; }
 
+/* Reduce Streamlit's default top padding to match side padding */
+[data-testid="stMainBlockContainer"] { padding-top: 1rem !important; }
+
 /* Top navbar */
 .nr-navbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -116,11 +120,12 @@ button[kind="secondary"] {
   background: transparent !important;
   color: #1B3D2A !important;
   border: 1px solid #C5D4C9 !important;
-  font-size: 14px !important;
+  font-size: 13px !important;
   font-weight: 600 !important;
-  padding: 8px 16px !important;
+  padding: 6px 8px !important;
   border-radius: 8px !important;
   transition: background 0.15s !important;
+  white-space: nowrap !important;
 }
 button[kind="secondary"]:hover { background: #E8F5ED !important; }
 
@@ -153,8 +158,25 @@ button[kind="secondary"]:hover { background: #E8F5ED !important; }
   border-radius: 14px !important;
   background: #FAFAF7 !important;
   min-height: 220px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
-[data-testid="stFileUploaderDropzoneInstructions"] { padding: 16px 32px 28px !important; }
+[data-testid="stFileUploaderDropzoneInstructions"] {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  padding: 4px !important;
+  text-align: center !important;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] span,
+[data-testid="stFileUploaderDropzoneInstructions"] p {
+  color: #1A1A1A !important;
+  font-weight: 500 !important;
+}
+[data-testid="stFileUploaderFile"] { display: none !important; }
 
 .nr-stat-grid {
   display: grid;
@@ -198,6 +220,20 @@ button[kind="secondary"]:hover { background: #E8F5ED !important; }
 }
 .nr-callout strong {
   color: #1F6B42;
+}
+/* Home page CTA button */
+.nr-cta-wrap > div > button {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  padding: 18px 0 !important;
+  border-radius: 14px !important;
+  letter-spacing: 0.01em !important;
+  box-shadow: 0 6px 28px rgba(45,140,90,0.4) !important;
+  transition: box-shadow 0.2s, transform 0.15s !important;
+}
+.nr-cta-wrap > div > button:hover {
+  box-shadow: 0 10px 40px rgba(45,140,90,0.55) !important;
+  transform: translateY(-2px) !important;
 }
 </style>
 """,
@@ -704,7 +740,7 @@ if "page" not in st.session_state:
 
 page = st.session_state["page"]
 
-logo_col, nav_col = st.columns([3, 2])
+logo_col, nav_col = st.columns([1, 2])
 with logo_col:
     st.markdown(
         """
@@ -823,16 +859,33 @@ if page == "Home":
 </div>""",
         unsafe_allow_html=True,
     )
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    if st.button("📷  Score My Receipt →", key="home_cta"):
-        st.session_state["page"] = "Score"
-        st.rerun()
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+    _, cta_col, _ = st.columns([1, 2, 1])
+    with cta_col:
+        st.markdown('<div class="nr-cta-wrap">', unsafe_allow_html=True)
+        if st.button("📷  Score My Receipt →", key="home_cta", use_container_width=True):
+            st.session_state["page"] = "Score"
+            st.session_state["_scroll_top"] = True
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PREDICTOR
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "Score":
+    if st.session_state.pop("_scroll_top", False):
+        st_components.html("""<script>
+            function scrollTop() {
+                var el = window.parent.document.querySelector('[data-testid="stMain"]')
+                      || window.parent.document.querySelector('section.main')
+                      || window.parent.document.querySelector('.main');
+                if (el) el.scrollTop = 0;
+            }
+            scrollTop();
+            setTimeout(scrollTop, 120);
+            setTimeout(scrollTop, 350);
+        </script>""", height=1)
     st.markdown(
         """
 <h1 style="font-family:'Fraunces',serif;font-size:32px;font-weight:700;
