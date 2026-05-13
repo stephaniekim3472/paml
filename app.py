@@ -1376,18 +1376,9 @@ elif page == "Score":
                     unsafe_allow_html=True,
                 )
 
-                if not comparison_df.empty:
-                    st.markdown(
-                        f"""
-<div class="nr-callout" style="margin:4px 0 12px 0;">
-  <strong>Model comparison for this basket:</strong> the current basket spans {prediction_spread:.1f}
-  points across the saved models. KNN remains the default deployed choice from the midpoint check-in,
-  while Ridge and MLP stay available for side-by-side comparison.
-</div>
-""",
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(comparison_df, hide_index=True, width='stretch')
+                if st.button("🔬 View Model Insights →", key="score_to_insights", type="primary", width='stretch'):
+                    st.session_state["page"] = "Insights"
+                    st.rerun()
 
                 # Nutrition summary
                 total_fiber   = f["fiber_density"]   * f["basket_size"]
